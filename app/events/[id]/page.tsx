@@ -152,72 +152,95 @@ export default function EventJudgingPage() {
 
   async function toggleEventLock() {
     if (!isAdmin || !event || !canAccessEvent(eventId)) {
-      console.log("❌ Cannot toggle lock - insufficient permissions")
-      return
+        console.log("❌ Cannot toggle lock - insufficient permissions");
+        return;
     }
 
-    setIsLocking(true)
+    setIsLocking(true);
     try {
-      const newLockState = !event.is_locked
-      const adminUser = getAdminUser()
+        if (!eventId) {
+        throw new Error("⚠️ eventId is missing or undefined");
+        }
 
-      console.log("🔒 Toggling lock state:", {
+        const newLockState = !event.is_locked;
+        const adminUser = getAdminUser();
+
+        console.log("🔒 Toggling lock state:", {
         eventId,
         currentState: event.is_locked,
         newState: newLockState,
         adminUser: adminUser?.username,
-      })
+        });
 
-      const updateData = {
+        // Step 1: Confirm the event exists
+        const { data: existingEvent, error: fetchError } = await supabase
+        .from("events")
+        .select("id, is_locked")
+        .eq("id", eventId)
+        .single();
+
+        if (fetchError || !existingEvent) {
+        throw new Error(`❌ Event with ID '${eventId}' not found or cannot be accessed`);
+        }
+
+        // Step 2: Check if already in desired state
+        if (existingEvent.is_locked === newLockState) {
+        alert(`Event is already ${newLockState ? "locked" : "unlocked"}!`);
+        return;
+        }
+
+        const updateData = {
         is_locked: newLockState,
         locked_by: newLockState ? adminUser?.username || "Unknown Admin" : null,
         locked_at: newLockState ? new Date().toISOString() : null,
-      }
+        };
 
-      console.log("📝 Update data:", updateData)
+        console.log("📝 Update data:", updateData);
 
-      // Use a more explicit update with error handling
-      const { data, error } = await supabase
+        // Step 3: Perform the update
+        const { data: updatedData, error: updateError } = await supabase
         .from("events")
         .update(updateData)
         .eq("id", eventId)
-        .select("id, name, is_locked, locked_by, locked_at")
+        .select("id, name, is_locked, locked_by, locked_at");
 
-      if (error) {
-        console.error("❌ Lock update error:", error)
-        throw new Error(`Database update failed: ${error.message}`)
-      }
+        if (updateError) {
+        throw new Error(`❌ Supabase update failed: ${updateError.message}`);
+        }
 
-      console.log("✅ Lock update successful:", data)
+        if (!updatedData || updatedData.length === 0) {
+        throw new Error("⚠️ No rows updated. Event may not exist or RLS policy blocked the update.");
+        }
 
-      if (!data || data.length === 0) {
-        throw new Error("No rows were updated - event may not exist")
-      }
+        // Step 4: Update local state
+        const updatedEvent = updatedData[0];
+        setEvent({ ...event, ...updatedEvent });
 
-      // Update local state with the returned data
-      const updatedEvent = data[0]
-      setEvent({ ...event, ...updatedEvent })
+        console.log("✅ Lock state updated locally:", updatedEvent);
+        alert(`Event ${newLockState ? "locked" : "unlocked"} successfully!`);
 
-      console.log("✅ Local state updated:", updatedEvent)
-      alert(`Event ${newLockState ? "locked" : "unlocked"} successfully!`)
+        // Step 5: Optional verification fetch after delay
+        setTimeout(async () => {
+        const { data: verifyData, error: verifyError } = await supabase
+            .from("events")
+            .select("is_locked, locked_by, locked_at")
+            .eq("id", eventId)
+            .single();
 
-      // Verify the update by fetching fresh data
-      setTimeout(async () => {
-        const { data: verifyData } = await supabase
-          .from("events")
-          .select("is_locked, locked_by, locked_at")
-          .eq("id", eventId)
-          .single()
-
-        console.log("🔍 Verification check:", verifyData)
-      }, 1000)
+        if (verifyError) {
+            console.warn("⚠️ Could not verify updated event:", verifyError.message);
+        } else {
+            console.log("🔍 Verification check:", verifyData);
+        }
+        }, 1000);
     } catch (error: any) {
-      console.error("❌ Lock toggle error:", error)
-      alert(`Error ${event.is_locked ? "unlocking" : "locking"} event: ${error.message}`)
+        console.error("❌ Lock toggle error:", error);
+        alert(`Error ${event.is_locked ? "unlocking" : "locking"} event: ${error.message}`);
     } finally {
-      setIsLocking(false)
+        setIsLocking(false);
     }
   }
+
 
   function handleMarkChange(participantId: number, criteriaId: number, round: number, value: string) {
     // Prevent editing if event is locked
