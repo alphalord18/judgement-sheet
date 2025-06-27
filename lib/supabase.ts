@@ -12,6 +12,9 @@ export type Event = {
   date: string
   is_active: boolean
   rounds: number
+  is_locked?: boolean
+  locked_by?: string
+  locked_at?: string
 }
 
 export type JudgmentCriteria = {
@@ -28,6 +31,9 @@ export type Participant = {
   school_code: string
   team_id: string
   solo_marking: boolean
+  class?: string
+  scholar_number?: string
+  category?: string
 }
 
 export type Mark = {

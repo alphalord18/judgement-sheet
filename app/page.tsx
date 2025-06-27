@@ -4,24 +4,40 @@ import { useEffect, useState } from "react"
 import { supabase, type Event } from "@/lib/supabase"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Calendar, Trophy, Users, Zap } from "lucide-react"
+import { Calendar, Trophy, Users, Zap, Shield, LogOut, BarChart3 } from "lucide-react"
 import Link from "next/link"
+import { isAdminLoggedIn, logoutAdmin, getAdminUser, getAccessibleEvents } from "@/lib/auth"
 
 export default function HomePage() {
   const [events, setEvents] = useState<Event[]>([])
   const [loading, setLoading] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [adminUser, setAdminUser] = useState<any>(null)
 
   useEffect(() => {
+    const admin = isAdminLoggedIn()
+    setIsAdmin(admin)
+    if (admin) {
+      setAdminUser(getAdminUser())
+    }
     fetchEvents()
   }, [])
 
   async function fetchEvents() {
     try {
-      const { data, error } = await supabase
-        .from("events")
-        .select("*")
-        .eq("is_active", true)
-        .order("date", { ascending: true })
+      const accessibleEvents = getAccessibleEvents()
+
+      let query = supabase.from("events").select("*").eq("is_active", true).order("date", { ascending: true })
+
+      // If not god admin, filter by accessible events
+      if (accessibleEvents.length > 0) {
+        query = query.in(
+          "id",
+          accessibleEvents.map((id) => Number.parseInt(id)),
+        )
+      }
+
+      const { data, error } = await query
 
       if (error) throw error
       setEvents(data || [])
@@ -30,6 +46,13 @@ export default function HomePage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleLogout() {
+    logoutAdmin()
+    setIsAdmin(false)
+    setAdminUser(null)
+    alert("Logged out successfully!")
   }
 
   if (loading) {
@@ -49,9 +72,38 @@ export default function HomePage() {
       <header className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-r from-pink-500/20 to-cyan-500/20"></div>
         <div className="relative container mx-auto px-4 py-16 text-center">
+          {/* Admin Controls */}
+          {isAdmin && (
+            <div className="absolute top-4 right-4 flex gap-2">
+              {adminUser?.is_god_admin && (
+                <Link href="/marks">
+                  <Button className="bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-bold text-sm px-4 py-2">
+                    <BarChart3 className="w-4 h-4 mr-2" />
+                    View All Marks
+                  </Button>
+                </Link>
+              )}
+              <Button
+                onClick={handleLogout}
+                className="bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold text-sm px-4 py-2"
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Logout
+              </Button>
+            </div>
+          )}
+
           <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-sm rounded-full px-6 py-2 mb-6">
             <Zap className="w-5 h-5 text-yellow-400" />
             <span className="text-white font-semibold">Judge Mode: ON</span>
+            {isAdmin && (
+              <>
+                <Shield className="w-4 h-4 text-green-400 ml-2" />
+                <span className="text-green-400 font-semibold text-sm">
+                  {adminUser?.is_god_admin ? "God Admin" : "Event Admin"}
+                </span>
+              </>
+            )}
           </div>
           <h1 className="text-6xl md:text-8xl font-black bg-gradient-to-r from-pink-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent mb-6">
             JUDGE IT
@@ -75,7 +127,9 @@ export default function HomePage() {
       {/* Events Grid */}
       <main className="container mx-auto px-4 py-16">
         <div className="text-center mb-12">
-          <h2 className="text-4xl font-bold text-white mb-4">Active Events</h2>
+          <h2 className="text-4xl font-bold text-white mb-4">
+            {isAdmin && !adminUser?.is_god_admin ? "Your Events" : "Active Events"}
+          </h2>
           <p className="text-white/70 text-lg">Choose your battlefield and start judging! 🔥</p>
         </div>
 
@@ -100,12 +154,20 @@ export default function HomePage() {
                 </CardTitle>
                 <CardDescription className="text-white/70 text-base">{event.description}</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-3">
                 <Link href={`/events/${event.id}`}>
                   <Button className="w-full bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white font-bold py-3 text-lg transition-all duration-300 transform hover:scale-105">
                     Start Judging 🚀
                   </Button>
                 </Link>
+                {isAdmin && (
+                  <Link href={`/marks/${event.id}`}>
+                    <Button className="w-full bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-bold py-2 text-sm">
+                      <BarChart3 className="w-4 h-4 mr-2" />
+                      View Results
+                    </Button>
+                  </Link>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -115,7 +177,11 @@ export default function HomePage() {
           <div className="text-center py-16">
             <div className="text-6xl mb-4">😴</div>
             <h3 className="text-2xl font-bold text-white mb-2">No Active Events</h3>
-            <p className="text-white/70">Check back later for more epic competitions!</p>
+            <p className="text-white/70">
+              {isAdmin && !adminUser?.is_god_admin
+                ? "No events assigned to your account."
+                : "Check back later for more epic competitions!"}
+            </p>
           </div>
         )}
       </main>
