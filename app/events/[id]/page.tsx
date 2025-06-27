@@ -870,11 +870,11 @@ export default function EventJudgingPage() {
                       key={team.team_id}
                       className={`p-4 rounded-lg border ${
                         index === 0
-                          ? "bg-gradient-to-r from-yellow-700/60 to-orange-700/60 border-yellow-500/60"
+                          ? "bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-yellow-500/30"
                           : index === 1
-                            ? "bg-gradient-to-r from-gray-600/60 to-gray-700/60 border-gray-400/60"
+                            ? "bg-gradient-to-r from-gray-400/20 to-gray-500/20 border-gray-400/30"
                             : index === 2
-                              ? "bg-gradient-to-r from-amber-800/60 to-amber-900/60 border-amber-600/60"
+                              ? "bg-gradient-to-r from-amber-600/20 to-amber-700/20 border-amber-600/30"
                               : "bg-white/5 border-white/10"
                       }`}
                     >
