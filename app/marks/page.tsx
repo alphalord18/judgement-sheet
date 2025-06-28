@@ -5,7 +5,7 @@ import { supabase, type Event, type Participant } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Trophy, Medal, BarChart3, Eye } from "lucide-react"
+import { ArrowLeft, Trophy, Medal, BarChart3, Eye } from 'lucide-react'
 import Link from "next/link"
 import { isAdminLoggedIn, getAdminUser, getAccessibleEvents } from "@/lib/auth"
 import { useRouter } from "next/navigation"
@@ -23,6 +23,47 @@ type CategoryResults = {
 
 type EventWithCategories = Event & {
   categories: CategoryResults[]
+}
+
+// Helper function to extract class level and category type
+function parseCategoryName(categoryName: string) {
+  const lowerCategory = categoryName.toLowerCase()
+  
+  let classLevel = 4 // Default for unknown
+  if (lowerCategory.includes('junior')) classLevel = 1
+  else if (lowerCategory.includes('intermediate')) classLevel = 2
+  else if (lowerCategory.includes('senior')) classLevel = 3
+  
+  // Extract the main category type (remove class level words)
+  let categoryType = categoryName
+    .replace(/junior\s*/gi, '')
+    .replace(/intermediate\s*/gi, '')
+    .replace(/senior\s*/gi, '')
+    .trim()
+  
+  // If no category type remains, use the original
+  if (!categoryType) {
+    categoryType = categoryName
+  }
+  
+  return { classLevel, categoryType, originalName: categoryName }
+}
+
+// Helper function to sort categories properly
+function sortCategories(categories: CategoryResults[]): CategoryResults[] {
+  return categories.sort((a, b) => {
+    const parsedA = parseCategoryName(a.category)
+    const parsedB = parseCategoryName(b.category)
+    
+    // First sort by category type (Dance, Art, Athletics, etc.)
+    const categoryTypeComparison = parsedA.categoryType.localeCompare(parsedB.categoryType)
+    if (categoryTypeComparison !== 0) {
+      return categoryTypeComparison
+    }
+    
+    // Then sort by class level (Junior=1, Intermediate=2, Senior=3)
+    return parsedA.classLevel - parsedB.classLevel
+  })
 }
 
 export default function MarksPage() {
@@ -122,7 +163,7 @@ export default function MarksPage() {
         })
 
         // Sort each category and assign ranks
-        const categories: CategoryResults[] = Object.entries(categoriesMap).map(([category, participants]) => {
+        let categories: CategoryResults[] = Object.entries(categoriesMap).map(([category, participants]) => {
           participants.sort((a, b) => b.total_marks - a.total_marks)
           participants.forEach((participant, index) => {
             participant.rank = index + 1
@@ -132,6 +173,9 @@ export default function MarksPage() {
             participants,
           }
         })
+
+        // Sort categories using the new sorting function
+        categories = sortCategories(categories)
 
         eventsWithCategories.push({
           ...event,
