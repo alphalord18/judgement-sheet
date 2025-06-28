@@ -26,8 +26,7 @@ export default function HomePage() {
   async function fetchEvents() {
     try {
       const accessibleEvents = getAccessibleEvents()
-
-      let query = supabase.from("events").select("*").eq("is_active", true).order("date", { ascending: true })
+      let query = supabase.from("events").select("*").eq("is_active", true).order("id", { ascending: true })
 
       // If not god admin, filter by accessible events
       if (accessibleEvents.length > 0) {
@@ -38,7 +37,6 @@ export default function HomePage() {
       }
 
       const { data, error } = await query
-
       if (error) throw error
       setEvents(data || [])
     } catch (error) {
@@ -92,7 +90,6 @@ export default function HomePage() {
               </Button>
             </div>
           )}
-
           <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-sm rounded-full px-6 py-2 mb-6">
             <Zap className="w-5 h-5 text-yellow-400" />
             <span className="text-white font-semibold">Judge Mode: ON</span>
@@ -132,7 +129,6 @@ export default function HomePage() {
           </h2>
           <p className="text-white/70 text-lg">Choose your battlefield and start judging! 🔥</p>
         </div>
-
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
           {events.map((event) => (
             <Card
@@ -172,7 +168,6 @@ export default function HomePage() {
             </Card>
           ))}
         </div>
-
         {events.length === 0 && (
           <div className="text-center py-16">
             <div className="text-6xl mb-4">😴</div>
