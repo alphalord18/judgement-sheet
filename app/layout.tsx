@@ -3,8 +3,8 @@ import type { Metadata } from "next"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "Judgement Sheet",
-  description: "A website to edit marks for each student in Kaleidoscope 2025",
+  title: "ScoreSync",
+  description: "ScoreSync is a website that's made it easier for both judges and OC to keep a record of the marks",
   generator: "JUDGEMENT",
 }
 

@@ -16,6 +16,47 @@ type CategoryInfo = {
   teamCount: number
 }
 
+// Helper function to extract class level and category type
+function parseCategoryName(categoryName: string) {
+  const lowerCategory = categoryName.toLowerCase()
+
+  let classLevel = 4 // Default for unknown
+  if (lowerCategory.includes("junior")) classLevel = 1
+  else if (lowerCategory.includes("intermediate")) classLevel = 2
+  else if (lowerCategory.includes("senior")) classLevel = 3
+
+  // Extract the main category type (remove class level words)
+  let categoryType = categoryName
+    .replace(/junior\s*/gi, "")
+    .replace(/intermediate\s*/gi, "")
+    .replace(/senior\s*/gi, "")
+    .trim()
+
+  // If no category type remains, use the original
+  if (!categoryType) {
+    categoryType = categoryName
+  }
+
+  return { classLevel, categoryType, originalName: categoryName }
+}
+
+// Helper function to sort categories properly
+function sortCategories(categories: CategoryInfo[]): CategoryInfo[] {
+  return categories.sort((a, b) => {
+    const parsedA = parseCategoryName(a.name)
+    const parsedB = parseCategoryName(b.name)
+
+    // First sort by category type (Dance, Art, Athletics, etc.)
+    const categoryTypeComparison = parsedA.categoryType.localeCompare(parsedB.categoryType)
+    if (categoryTypeComparison !== 0) {
+      return categoryTypeComparison
+    }
+
+    // Then sort by class level (Junior=1, Intermediate=2, Senior=3)
+    return parsedA.classLevel - parsedB.classLevel
+  })
+}
+
 export default function EventCategoriesPage() {
   const params = useParams()
   const eventId = Number.parseInt(params.id as string)
@@ -95,8 +136,8 @@ export default function EventCategoriesPage() {
         categoryMap[category].push(participant)
       })
 
-      // Create category info and sort by class level
-      const categoryInfos: CategoryInfo[] = Object.entries(categoryMap).map(([categoryName, participants]) => {
+      // Create category info
+      let categoryInfos: CategoryInfo[] = Object.entries(categoryMap).map(([categoryName, participants]) => {
         const uniqueTeams = new Set(participants.map((p) => p.team_id))
         return {
           name: categoryName,
@@ -105,25 +146,8 @@ export default function EventCategoriesPage() {
         }
       })
 
-      // Sort categories by class level (Junior -> Intermediate -> Senior)
-      categoryInfos.sort((a, b) => {
-        const getClassOrder = (categoryName: string) => {
-          if (categoryName.toLowerCase().includes("junior")) return 1
-          if (categoryName.toLowerCase().includes("intermediate")) return 2
-          if (categoryName.toLowerCase().includes("senior")) return 3
-          return 4 // Other categories go last
-        }
-
-        const orderA = getClassOrder(a.name)
-        const orderB = getClassOrder(b.name)
-
-        if (orderA !== orderB) {
-          return orderA - orderB
-        }
-
-        // If same class level, sort alphabetically
-        return a.name.localeCompare(b.name)
-      })
+      // Sort categories using the new sorting function
+      categoryInfos = sortCategories(categoryInfos)
 
       console.log("✅ Categories processed and sorted:", categoryInfos)
       setCategories(categoryInfos)
