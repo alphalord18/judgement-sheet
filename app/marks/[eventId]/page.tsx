@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import { supabase, type Event, type JudgmentCriteria, type Participant } from "@/lib/supabase"
+import { supabase, type Event, type JudgmentCriteria, type Participant, type Judge } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -10,17 +10,19 @@ import { ArrowLeft, Trophy, Medal, Star, BarChart3 } from "lucide-react"
 import Link from "next/link"
 import { isAdminLoggedIn, canAccessEvent, getAdminUser } from "@/lib/auth"
 import { useRouter } from "next/navigation"
+import React from "react"
 
 type ParticipantWithMarks = Participant & {
-  total_marks: number
+  marks_by_judge_and_criteria: Record<number, Record<number, number>> // judge_id -> criteria_id -> total marks for that criteria by that judge
+  total_marks_overall: number // Sum of all judges' marks for this participant
   rank: number
-  marks_by_criteria: Record<number, number>
   team_members?: Participant[] // For group events - store full participant objects
 }
 
 type CategoryResults = {
   category: string
   participants: ParticipantWithMarks[]
+  judges_who_marked: Judge[] // List of judges who submitted marks in this category
 }
 
 type EventWithDetails = Event & {
@@ -131,81 +133,130 @@ export default function EventMarksPage() {
 
       if (participantsError) throw participantsError
 
-      // Fetch marks for this event
-      const { data: marksData, error: marksError } = await supabase.from("marks").select("*").eq("event_id", eventId)
+      // Fetch marks for this event, including judge_id and judge details
+      const { data: marksData, error: marksError } = await supabase
+        .from("marks")
+        .select("*, judges(id, name, username)") // Select judge details from the new 'judges' table
+        .eq("event_id", eventId)
 
       if (marksError) throw marksError
 
-      // Group participants by team to identify group events
-      const teamsMap: Record<string, Participant[]> = {}
+      // Fetch all judges to map judge_id to name
+      const { data: judgesData, error: judgesError } = await supabase.from("judges").select("id, name, username")
+
+      if (judgesError) throw judgesError
+      const judgesMap = new Map(judgesData?.map((judge) => [judge.id, judge]) || [])
+
+      // Group participants by category first, then by team within each category
+      const categoryTeamsMap: Record<string, Record<string, Participant[]>> = {}
       ;(participantsData || []).forEach((participant) => {
-        if (!teamsMap[participant.team_id]) {
-          teamsMap[participant.team_id] = []
+        const category = participant.category || "General Category"
+        
+        if (!categoryTeamsMap[category]) {
+          categoryTeamsMap[category] = {}
         }
-        teamsMap[participant.team_id].push(participant)
+        
+        if (!categoryTeamsMap[category][participant.team_id]) {
+          categoryTeamsMap[category][participant.team_id] = []
+        }
+        
+        categoryTeamsMap[category][participant.team_id].push(participant)
       })
 
       // Group participants by category and calculate marks
-      const categoriesMap: Record<string, ParticipantWithMarks[]> = {}
-      ;(participantsData || []).forEach((participant) => {
-        const category = participant.category || "General Category"
-
+      const categoriesMap: Record<string, { participants: ParticipantWithMarks[]; judges: Set<number> }> = {}
+      
+      // Process each category separately
+      Object.entries(categoryTeamsMap).forEach(([category, teamsInCategory]) => {
         if (!categoriesMap[category]) {
-          categoriesMap[category] = []
+          categoriesMap[category] = { participants: [], judges: new Set() }
         }
 
-        // Check if this participant is already added (for group events)
-        const existingParticipant = categoriesMap[category].find((p) => p.team_id === participant.team_id)
-        if (existingParticipant && !participant.solo_marking) {
-          // Add team member to existing entry
-          if (!existingParticipant.team_members) {
-            existingParticipant.team_members = [existingParticipant as Participant]
-          }
-          existingParticipant.team_members.push(participant)
-          return
-        }
+        // Process each team within the category
+        Object.entries(teamsInCategory).forEach(([teamId, teamMembers]) => {
+          teamMembers.forEach((participant) => {
+            // Determine if this participant is part of a team that should be grouped
+            const isTeamParticipant = !participant.solo_marking && teamMembers.length > 1
+            const isFirstParticipantOfTeam = isTeamParticipant && teamMembers[0].id === participant.id
 
-        const marks_by_criteria: Record<number, number> = {}
-        let total_marks = 0
+            // If it's a team participant but not the first one, skip creating a new entry
+            if (isTeamParticipant && !isFirstParticipantOfTeam) {
+              return
+            }
 
-        // Calculate marks for each criteria across all rounds
-        ;(criteriaData || []).forEach((criteria) => {
-          let criteriaTotal = 0
-          for (let round = 1; round <= eventData.rounds; round++) {
-            const mark = marksData?.find(
-              (m) => m.participant_id === participant.id && m.criteria_id === criteria.id && m.round_number === round,
-            )
-            criteriaTotal += mark?.marks_obtained || 0
-          }
-          marks_by_criteria[criteria.id] = criteriaTotal
-          total_marks += criteriaTotal
+            const marks_by_judge_and_criteria: Record<number, Record<number, number>> = {} // judge_id -> criteria_id -> total marks for that criteria by that judge
+            let total_marks_overall = 0
+
+            // Calculate marks for each criteria across all rounds and judges
+            ;(criteriaData || []).forEach((criteria) => {
+              // Initialize marks for each judge for this criteria
+              judgesData?.forEach((judge) => {
+                if (!marks_by_judge_and_criteria[judge.id]) {
+                  marks_by_judge_and_criteria[judge.id] = {}
+                }
+                marks_by_judge_and_criteria[judge.id][criteria.id] = 0
+              })
+
+              // For team marking, marks are associated with the first participant of the team
+              const participantIdsToConsider = participant.solo_marking
+                ? [participant.id]
+                : [teamMembers[0].id]
+
+              for (const pId of participantIdsToConsider) {
+                for (let round = 1; round <= eventData.rounds; round++) {
+                  const relevantMarks = marksData?.filter(
+                    (m) => m.participant_id === pId && m.criteria_id === criteria.id && m.round_number === round,
+                  )
+
+                  relevantMarks?.forEach((mark) => {
+                    if (mark.judge_id) {
+                      if (!marks_by_judge_and_criteria[mark.judge_id]) {
+                        marks_by_judge_and_criteria[mark.judge_id] = {}
+                      }
+                      marks_by_judge_and_criteria[mark.judge_id][criteria.id] =
+                        (marks_by_judge_and_criteria[mark.judge_id][criteria.id] || 0) + mark.marks_obtained
+                      categoriesMap[category].judges.add(mark.judge_id) // Track judges who marked in this category
+                    }
+                  })
+                }
+              }
+            })
+
+            // Calculate overall total marks for the participant/team (sum of all judges' marks)
+            for (const judgeId in marks_by_judge_and_criteria) {
+              for (const criteriaId in marks_by_judge_and_criteria[judgeId]) {
+                total_marks_overall += marks_by_judge_and_criteria[judgeId][criteriaId]
+              }
+            }
+
+            const participantWithMarks: ParticipantWithMarks = {
+              ...participant,
+              total_marks_overall,
+              rank: 0, // Will be set after sorting
+              marks_by_judge_and_criteria,
+              team_members: isTeamParticipant ? teamMembers : undefined,
+            }
+
+            categoriesMap[category].participants.push(participantWithMarks)
+          })
         })
-
-        const participantWithMarks: ParticipantWithMarks = {
-          ...participant,
-          total_marks,
-          rank: 0, // Will be set after sorting
-          marks_by_criteria,
-        }
-
-        // For group events, initialize team_members array
-        if (!participant.solo_marking && teamsMap[participant.team_id].length > 1) {
-          participantWithMarks.team_members = [participant]
-        }
-
-        categoriesMap[category].push(participantWithMarks)
       })
 
       // Sort each category and assign ranks
-      let categories: CategoryResults[] = Object.entries(categoriesMap).map(([category, participants]) => {
-        participants.sort((a, b) => b.total_marks - a.total_marks)
-        participants.forEach((participant, index) => {
+      let categories: CategoryResults[] = Object.entries(categoriesMap).map(([category, data]) => {
+        data.participants.sort((a, b) => b.total_marks_overall - a.total_marks_overall)
+        data.participants.forEach((participant, index) => {
           participant.rank = index + 1
         })
 
+        const judgesWhoMarked = Array.from(data.judges)
+          .map((judgeId) => judgesMap.get(judgeId))
+          .filter(Boolean) as Judge[]
+
         return {
           category,
-          participants,
+          participants: data.participants,
+          judges_who_marked: judgesWhoMarked,
         }
       })
 
@@ -301,17 +352,25 @@ export default function EventMarksPage() {
                   {categoryResult.category}
                 </CardTitle>
                 <p className="text-white/70">{categoryResult.participants.length} participants</p>
+                {categoryResult.judges_who_marked.length > 0 && (
+                  <p className="text-white/70 text-sm">
+                    Judges:{" "}
+                    <span className="font-bold">{categoryResult.judges_who_marked.map((j) => j.name).join(", ")}</span>
+                  </p>
+                )}
               </CardHeader>
               <CardContent>
                 {categoryResult.participants.length === 0 ? (
                   <p className="text-white/70 text-center py-8">No participants in this category</p>
+                ) : event.judgment_criteria.length === 0 ? (
+                  <p className="text-white/70 text-center py-8">No judgment criteria found for this event</p>
                 ) : (
                   <>
                     {/* Top 3 Winners */}
                     <div className="mb-8">
                       <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
                         <Star className="w-5 h-5 text-cyan-400" />
-                        Top 3 Winners
+                        Top 3 Winners (Overall)
                       </h3>
                       <div className="grid md:grid-cols-3 gap-4">
                         {categoryResult.participants.slice(0, 3).map((participant, index) => (
@@ -322,7 +381,9 @@ export default function EventMarksPage() {
                                 ? "bg-gradient-to-r from-yellow-700/60 to-orange-700/60 border-yellow-500/60"
                                 : index === 1
                                   ? "bg-gradient-to-r from-gray-600/60 to-gray-700/60 border-gray-400/60"
-                                  : "bg-gradient-to-r from-amber-800/60 to-amber-900/60 border-amber-600/60"
+                                  : index === 2
+                                    ? "bg-gradient-to-r from-amber-800/60 to-amber-900/60 border-amber-600/60"
+                                    : ""
                             }`}
                           >
                             <CardContent className="p-4">
@@ -352,16 +413,14 @@ export default function EventMarksPage() {
                                       participant.name
                                     )}
                                   </div>
-                                  <div className="text-white/70 text-sm">{participant.class}</div>
                                 </div>
                                 <div className="text-right">
-                                  <div className="text-2xl font-bold text-white">{participant.total_marks}</div>
+                                  <div className="text-2xl font-bold text-white">{participant.total_marks_overall}</div>
                                   <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30 text-xs">
                                     {participant.school_code}
                                   </Badge>
                                 </div>
                               </div>
-                              <div className="text-xs text-white/60">Scholar: {participant.scholar_number}</div>
                             </CardContent>
                           </Card>
                         ))}
@@ -372,7 +431,7 @@ export default function EventMarksPage() {
                     <div>
                       <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
                         <BarChart3 className="w-5 h-5 text-cyan-400" />
-                        Complete Results with Skill Marks
+                        Complete Results with Judge Marks
                       </h3>
                       <div className="overflow-x-auto">
                         <table className="w-full border-collapse bg-white/5 rounded-lg">
@@ -383,17 +442,22 @@ export default function EventMarksPage() {
                               <th className="text-left py-3 px-4 text-white font-bold">Class</th>
                               <th className="text-left py-3 px-4 text-white font-bold">Scholar No.</th>
                               <th className="text-left py-3 px-4 text-white font-bold">Team Code</th>
+                              <th className="text-left py-3 px-4 text-white font-bold min-w-[150px]">Judge Scores</th>
                               {event.judgment_criteria.map((criteria) => (
-                                <th
-                                  key={criteria.id}
-                                  className="text-center py-3 px-4 text-white font-bold min-w-[80px]"
-                                >
-                                  <div className="text-xs">{criteria.criteria_name}</div>
-                                  <div className="text-xs text-white/70">Max: {criteria.max_marks * event.rounds}</div>
-                                </th>
+                                <React.Fragment key={criteria.id}>
+                                  <th
+                                    className="text-center py-3 px-4 text-white font-bold min-w-[80px]"
+                                    colSpan={categoryResult.judges_who_marked.length || 1}
+                                  >
+                                    <div className="text-xs">{criteria.criteria_name}</div>
+                                    <div className="text-xs text-white/70">
+                                      Max: {criteria.max_marks * event.rounds}
+                                    </div>
+                                  </th>
+                                </React.Fragment>
                               ))}
                               <th className="text-center py-3 px-4 text-white font-bold bg-gradient-to-r from-yellow-500/20 to-orange-500/20">
-                                Total
+                                Overall Total
                               </th>
                             </tr>
                           </thead>
@@ -464,13 +528,48 @@ export default function EventMarksPage() {
                                     {participant.school_code}
                                   </Badge>
                                 </td>
+                                <td className="py-3 px-4 text-white/80">
+                                  {categoryResult.judges_who_marked.length > 0 ? (
+                                    <div className="space-y-1">
+                                      {categoryResult.judges_who_marked.map((judge) => {
+                                        // Calculate total score for this judge for this participant
+                                        const judgeTotal = Object.values(participant.marks_by_judge_and_criteria[judge.id] || {}).reduce((sum, mark) => sum + mark, 0)
+                                        return (
+                                          <div key={judge.id} className="flex justify-between items-center text-xs">
+                                            <span className="font-medium">{judge.name}</span>
+                                            <span className="font-bold text-cyan-300">{judgeTotal}</span>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <span className="text-white/50 text-sm">N/A</span>
+                                  )}
+                                </td>
                                 {event.judgment_criteria.map((criteria) => (
-                                  <td key={criteria.id} className="py-3 px-4 text-center text-white">
-                                    <div className="font-bold">{participant.marks_by_criteria[criteria.id] || 0}</div>
-                                  </td>
+                                  <React.Fragment key={`participant-${participant.id}-criteria-${criteria.id}`}>
+                                    {categoryResult.judges_who_marked.length > 0 ? (
+                                      categoryResult.judges_who_marked.map((judge) => (
+                                        <td
+                                          key={`mark-${participant.id}-${criteria.id}-${judge.id}`}
+                                          className="py-3 px-2 text-center text-white text-sm border-l border-white/10"
+                                        >
+                                          {participant.marks_by_judge_and_criteria[judge.id]?.[criteria.id] || 0}
+                                        </td>
+                                      ))
+                                    ) : (
+                                      <td
+                                        key={`mark-no-judge-${participant.id}-${criteria.id}`}
+                                        className="py-3 px-2 text-center text-white/50 text-sm"
+                                        colSpan={1}
+                                      >
+                                        N/A
+                                      </td>
+                                    )}
+                                  </React.Fragment>
                                 ))}
                                 <td className="py-3 px-4 text-center bg-gradient-to-r from-yellow-500/10 to-orange-500/10">
-                                  <div className="text-white font-bold text-lg">{participant.total_marks}</div>
+                                  <div className="text-white font-bold text-lg">{participant.total_marks_overall}</div>
                                 </td>
                               </tr>
                             ))}

@@ -10,15 +10,18 @@ import Link from "next/link"
 import { isAdminLoggedIn, getAdminUser, getAccessibleEvents } from "@/lib/auth"
 import { useRouter } from "next/navigation"
 
-type ParticipantWithMarks = Participant & {
+type TeamWithMarks = {
+  team_name: string
+  school_code: string
   total_marks: number
   rank: number
   marks_by_criteria: Record<number, number>
+  participants: string[] // Array of participant names
 }
 
 type CategoryResults = {
   category: string
-  participants: ParticipantWithMarks[]
+  teams: TeamWithMarks[]
 }
 
 type EventWithCategories = Event & {
@@ -123,25 +126,43 @@ export default function MarksPage() {
           .from("participants")
           .select("*")
           .eq("event_id", event.id)
-          .order("category, name")
+          .order("category, team_id, name")
         if (participantsError) throw participantsError
 
         // Fetch marks for this event
         const { data: marksData, error: marksError } = await supabase.from("marks").select("*").eq("event_id", event.id)
         if (marksError) throw marksError
 
-        // Group participants by category and calculate marks
-        const categoriesMap: Record<string, ParticipantWithMarks[]> = {}
+        // Group participants by category and then by team
+        const categoriesMap: Record<string, Record<string, TeamWithMarks>> = {}
+        
         ;(participantsData || []).forEach((participant) => {
           const category = participant.category || "General Category"
+          const teamId = participant.team_id
+          const teamName = teamId || "Individual"
+          
           if (!categoriesMap[category]) {
-            categoriesMap[category] = []
+            categoriesMap[category] = {}
+          }
+          
+          if (!categoriesMap[category][teamName]) {
+            categoriesMap[category][teamName] = {
+              team_name: teamName,
+              school_code: participant.school_code,
+              total_marks: 0,
+              rank: 0,
+              marks_by_criteria: {},
+              participants: []
+            }
           }
 
-          const marks_by_criteria: Record<number, number> = {}
-          let total_marks = 0
+          // Add participant name to team
+          categoriesMap[category][teamName].participants.push(participant.name)
 
-          // Calculate marks for each criteria across all rounds
+          // Calculate marks for this participant and add to team total
+          const marks_by_criteria: Record<number, number> = {}
+          let participant_total_marks = 0
+
           ;(criteriaData || []).forEach((criteria) => {
             let criteriaTotal = 0
             for (let round = 1; round <= event.rounds; round++) {
@@ -151,30 +172,34 @@ export default function MarksPage() {
               criteriaTotal += mark?.marks_obtained || 0
             }
             marks_by_criteria[criteria.id] = criteriaTotal
-            total_marks += criteriaTotal
+            participant_total_marks += criteriaTotal
           })
 
-          categoriesMap[category].push({
-            ...participant,
-            total_marks,
-            rank: 0, // Will be set after sorting
-            marks_by_criteria,
+          // Add participant's marks to team total
+          ;(criteriaData || []).forEach((criteria) => {
+            if (!categoriesMap[category][teamName].marks_by_criteria[criteria.id]) {
+              categoriesMap[category][teamName].marks_by_criteria[criteria.id] = 0
+            }
+            categoriesMap[category][teamName].marks_by_criteria[criteria.id] += marks_by_criteria[criteria.id]
           })
+          
+          categoriesMap[category][teamName].total_marks += participant_total_marks
         })
 
-        // Sort each category and assign ranks
-        let categories: CategoryResults[] = Object.entries(categoriesMap).map(([category, participants]) => {
-          participants.sort((a, b) => b.total_marks - a.total_marks)
-          participants.forEach((participant, index) => {
-            participant.rank = index + 1
+        // Convert to array format and sort teams within each category
+        let categories: CategoryResults[] = Object.entries(categoriesMap).map(([category, teamsMap]) => {
+          const teams = Object.values(teamsMap)
+          teams.sort((a, b) => b.total_marks - a.total_marks)
+          teams.forEach((team, index) => {
+            team.rank = index + 1
           })
           return {
             category,
-            participants,
+            teams,
           }
         })
 
-        // Sort categories using the new sorting function
+        // Sort categories using the existing sorting function
         categories = sortCategories(categories)
 
         eventsWithCategories.push({
@@ -237,7 +262,7 @@ export default function MarksPage() {
                 <BarChart3 className="w-8 h-8 text-cyan-400" />
                 Event Results Overview
               </h1>
-              <p className="text-white/70">Top 3 performers across all events and categories</p>
+              <p className="text-white/70">Top 3 team performers across all events and categories</p>
             </div>
           </div>
         </div>
@@ -283,15 +308,15 @@ export default function MarksPage() {
                       <div key={categoryResult.category}>
                         <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
                           <Medal className="w-5 h-5 text-yellow-400" />
-                          {categoryResult.category} - Top 3
+                          {categoryResult.category} - Top 3 Teams
                         </h3>
-                        {categoryResult.participants.length === 0 ? (
-                          <p className="text-white/70 text-center py-4">No participants in this category</p>
+                        {categoryResult.teams.length === 0 ? (
+                          <p className="text-white/70 text-center py-4">No teams in this category</p>
                         ) : (
                           <div className="grid md:grid-cols-3 gap-4">
-                            {categoryResult.participants.slice(0, 3).map((participant, index) => (
+                            {categoryResult.teams.slice(0, 3).map((team, index) => (
                               <Card
-                                key={participant.id}
+                                key={`${categoryResult.category}-${team.team_name}`}
                                 className={`${
                                   index === 0
                                     ? "bg-gradient-to-r from-yellow-700/60 to-orange-700/60 border-yellow-500/60"
@@ -301,9 +326,9 @@ export default function MarksPage() {
                                 }`}
                               >
                                 <CardContent className="p-4">
-                                  <div className="flex items-center gap-3 mb-3">
+                                  <div className="flex items-start gap-3 mb-3">
                                     <div
-                                      className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
+                                      className={`w-10 h-10 rounded-full flex items-center justify-center font-bold flex-shrink-0 ${
                                         index === 0
                                           ? "bg-yellow-500 text-black"
                                           : index === 1
@@ -313,18 +338,23 @@ export default function MarksPage() {
                                     >
                                       {index === 0 ? "🥇" : index === 1 ? "🥈" : "🥉"}
                                     </div>
-                                    <div className="flex-1">
-                                      <div className="text-white font-bold">{participant.name}</div>
-                                      <div className="text-white/70 text-sm">{participant.class}</div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="space-y-1">
+                                        {team.participants.map((participant, idx) => (
+                                          <div key={idx} className="text-white font-bold text-sm">
+                                            {participant}
+                                          </div>
+                                        ))}
+                                      </div>
+
                                     </div>
-                                    <div className="text-right">
-                                      <div className="text-2xl font-bold text-white">{participant.total_marks}</div>
+                                    <div className="text-right flex-shrink-0">
+                                      <div className="text-2xl font-bold text-white">{team.total_marks}</div>
                                       <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30 text-xs">
-                                        {participant.school_code}
+                                        {team.school_code}
                                       </Badge>
                                     </div>
                                   </div>
-                                  <div className="text-xs text-white/60">Scholar: {participant.scholar_number}</div>
                                 </CardContent>
                               </Card>
                             ))}

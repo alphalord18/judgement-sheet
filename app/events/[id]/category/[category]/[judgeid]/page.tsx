@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import { supabase, type Event, type JudgmentCriteria, type Participant } from "@/lib/supabase"
+import {
+  supabase,
+  type Event,
+  type JudgmentCriteria,
+  type Participant,
+  type AdminUser,
+  type Judge,
+} from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -16,7 +23,7 @@ type TeamWithMarks = {
   school_code: string
   participants: Participant[]
   is_solo_marking: boolean
-  total_marks: number
+  total_marks: number // This will be the current judge's total for the team
   rank: number
 }
 
@@ -24,36 +31,51 @@ export default function CategoryJudgingPage() {
   const params = useParams()
   const eventId = Number.parseInt(params.id as string)
   const categoryName = decodeURIComponent(params.category as string)
+  const judgeId = Number.parseInt(params.judgeid as string)
 
   const [event, setEvent] = useState<Event | null>(null)
   const [criteria, setCriteria] = useState<JudgmentCriteria[]>([])
   const [participants, setParticipants] = useState<Participant[]>([])
-  const [marks, setMarks] = useState<Record<string, number>>({})
+  const [marks, setMarks] = useState<Record<string, number>>({}) // Key: `${participantId}-${criteriaId}-${round}`
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isAdmin, setIsAdmin] = useState(false)
+  const [currentAdminUser, setCurrentAdminUser] = useState<AdminUser | null>(null) // For full admin features
+  const [currentJudgeDetails, setCurrentJudgeDetails] = useState<Judge | null>(null) // Details of the judge from URL
   const [isLocking, setIsLocking] = useState(false)
 
   useEffect(() => {
-    const adminStatus = isAdminLoggedIn()
-    console.log("🔍 Admin status check:", adminStatus)
-    setIsAdmin(adminStatus)
+    const adminUser = getAdminUser()
+    setCurrentAdminUser(adminUser)
 
-    if (eventId && !isNaN(eventId)) {
+    if (eventId && !isNaN(eventId) && judgeId && !isNaN(judgeId)) {
+      fetchJudgeDetails()
       fetchEventData()
     } else {
-      setError("Invalid event ID")
+      setError("Invalid event ID or Judge ID provided in URL.")
       setLoading(false)
     }
-  }, [eventId, categoryName])
+  }, [eventId, categoryName, judgeId])
+
+  async function fetchJudgeDetails() {
+    try {
+      const { data, error } = await supabase.from("judges").select("id, name, username").eq("id", judgeId).single()
+      if (error || !data) {
+        throw new Error("Judge not found.")
+      }
+      setCurrentJudgeDetails(data)
+    } catch (error: any) {
+      console.error("Error fetching judge details:", error.message)
+      setError("Could not load judge details. Please go back and select a judge again.")
+    }
+  }
 
   async function fetchEventData() {
     try {
       setLoading(true)
       setError(null)
 
-      console.log("🔍 Fetching data for event ID:", eventId, "category:", categoryName)
+      console.log("🔍 Fetching data for event ID:", eventId, "category:", categoryName, "judge ID:", judgeId)
 
       // Fetch event details
       const { data: eventData, error: eventError } = await supabase
@@ -70,9 +92,8 @@ export default function CategoryJudgingPage() {
       console.log("✅ Event loaded:", eventData)
       setEvent(eventData)
 
-      // Check if event is locked and user is not admin
-      const currentAdminStatus = isAdminLoggedIn()
-      if (eventData.is_locked && !currentAdminStatus) {
+      // Check if event is locked and user is not a full admin
+      if (eventData.is_locked && !isAdminLoggedIn()) {
         console.log("🚫 Access blocked - event is locked and user is not admin")
         setError(
           `This event has been locked by administrator "${eventData.locked_by || "Unknown"}". Please contact the administrator for access.`,
@@ -106,26 +127,27 @@ export default function CategoryJudgingPage() {
 
       if (participantsError) {
         console.error("❌ Participants error:", participantsError)
-        throw new Error(`Participants loading failed: ${participantsError.message}`)
+        throw new Error(`Participants loading failed: ${participantsData.message}`)
       }
 
       console.log("✅ Participants loaded for category:", participantsData)
       setParticipants(participantsData || [])
 
-      // Fetch existing marks for participants in this category
-      if (participantsData && participantsData.length > 0) {
+      // Fetch existing marks for participants in this category by the CURRENT JUDGE (from URL)
+      if (participantsData && participantsData.length > 0 && judgeId) {
         const participantIds = participantsData.map((p) => p.id)
         const { data: marksData, error: marksError } = await supabase
           .from("marks")
           .select("*")
           .eq("event_id", eventId)
           .in("participant_id", participantIds)
+          .eq("judge_id", judgeId) // Filter by current judge from URL
 
         if (marksError) {
           console.error("❌ Marks error:", marksError)
           console.warn("Marks loading failed, starting with empty marks")
         } else {
-          console.log("✅ Marks loaded:", marksData)
+          console.log("✅ Marks loaded for current judge:", marksData)
           const marksMap: Record<string, number> = {}
           marksData?.forEach((mark) => {
             const key = `${mark.participant_id}-${mark.criteria_id}-${mark.round_number}`
@@ -143,7 +165,7 @@ export default function CategoryJudgingPage() {
   }
 
   async function toggleEventLock() {
-    if (!isAdmin || !event || !canAccessEvent(eventId)) {
+    if (!isAdminLoggedIn() || !event || !canAccessEvent(eventId)) {
       console.log("❌ Cannot toggle lock - insufficient permissions")
       return
     }
@@ -155,7 +177,7 @@ export default function CategoryJudgingPage() {
       }
 
       const newLockState = !event.is_locked
-      const adminUser = getAdminUser()
+      const adminUser = getAdminUser() // Use the full admin user for locking
 
       console.log("🔒 Toggling lock state:", {
         eventId,
@@ -215,40 +237,53 @@ export default function CategoryJudgingPage() {
     })
   }
 
-  async function saveMarks() {
+  async function saveTeamMarks(teamParticipants: Participant[]) {
     if (event?.is_locked) {
       alert("This event is locked. Please contact the administrator to unlock it.")
+      return
+    }
+    if (!judgeId) {
+      alert("Judge ID not found in URL. Please go back and select a judge.")
       return
     }
 
     setSaving(true)
     try {
-      console.log("💾 Starting to save marks...")
+      console.log("💾 Starting to save marks for team:", teamParticipants[0]?.team_id)
 
-      const marksToUpsert = Object.entries(marks)
-        .filter(([_, value]) => value > 0)
-        .map(([key, value]) => {
-          const [participantId, criteriaId, roundNumber] = key.split("-").map(Number)
-          return {
-            event_id: eventId,
-            participant_id: participantId,
-            criteria_id: criteriaId,
-            round_number: roundNumber,
-            marks_obtained: value,
+      const marksToUpsert = []
+      for (const participant of teamParticipants) {
+        for (let round = 1; round <= (event?.rounds || 1); round++) {
+          for (const criterion of criteria) {
+            const key = `${participant.id}-${criterion.id}-${round}`
+            const markValue = marks[key]
+
+            // Only include marks that have been entered (value is a number)
+            if (markValue !== undefined && markValue !== null) {
+              marksToUpsert.push({
+                event_id: eventId,
+                participant_id: participant.id,
+                criteria_id: criterion.id,
+                round_number: round,
+                marks_obtained: markValue,
+                judge_id: judgeId, // Assign judge's ID from URL
+              })
+            }
           }
-        })
+        }
+      }
 
       console.log("💾 Marks to save:", marksToUpsert)
 
       if (marksToUpsert.length === 0) {
-        alert("No marks to save!")
+        alert("No marks to save for this team!")
         return
       }
 
       const { data, error } = await supabase
         .from("marks")
         .upsert(marksToUpsert, {
-          onConflict: "participant_id,criteria_id,round_number",
+          onConflict: "event_id,participant_id,criteria_id,round_number,judge_id", // Corrected: Added event_id
         })
         .select()
 
@@ -257,8 +292,8 @@ export default function CategoryJudgingPage() {
         throw error
       }
 
-      console.log("✅ Marks saved successfully:", data)
-      alert("Marks saved successfully! 🎉")
+      console.log("✅ Marks saved successfully for team:", data)
+      alert(`Marks for team ${teamParticipants[0]?.team_id} saved successfully! 🎉`)
     } catch (error: any) {
       console.error("❌ Save error:", error)
       alert(`Error saving marks: ${error.message}`)
@@ -267,7 +302,7 @@ export default function CategoryJudgingPage() {
     }
   }
 
-  // Group participants by team and calculate totals
+  // Group participants by team and calculate totals for the CURRENT JUDGE
   const teams: TeamWithMarks[] = participants.reduce((acc, participant) => {
     const existingTeam = acc.find((team) => team.team_id === participant.team_id)
     if (existingTeam) {
@@ -285,7 +320,7 @@ export default function CategoryJudgingPage() {
     return acc
   }, [] as TeamWithMarks[])
 
-  // Calculate totals for each team
+  // Calculate totals for each team based on current judge's marks
   teams.forEach((team) => {
     let total = 0
     if (event) {
@@ -345,10 +380,10 @@ export default function CategoryJudgingPage() {
           </h1>
           <p className="text-red-300 mb-6 text-lg leading-relaxed">{error}</p>
           <div className="space-y-3">
-            <Link href={`/events/${eventId}`}>
+            <Link href={`/events/${eventId}/category/${encodeURIComponent(categoryName)}/select-judge`}>
               <Button className="bg-gradient-to-r from-pink-500 to-purple-500 w-full">
                 <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Categories
+                Back to Judge Selection
               </Button>
             </Link>
             {error.includes("locked") && (
@@ -358,7 +393,7 @@ export default function CategoryJudgingPage() {
                 </p>
               </div>
             )}
-            {!isAdmin && (
+            {isAdminLoggedIn() && (
               <Link href="/admin/login">
                 <Button variant="outline" className="bg-white/10 border-white/20 text-white hover:bg-white/20 w-full">
                   <Shield className="w-4 h-4 mr-2" />
@@ -388,7 +423,7 @@ export default function CategoryJudgingPage() {
     )
   }
 
-  const canManageEvent = isAdmin && canAccessEvent(eventId)
+  const canManageEvent = isAdminLoggedIn() && canAccessEvent(eventId) // Use full admin login for management
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 w-full overflow-x-auto">
@@ -397,10 +432,10 @@ export default function CategoryJudgingPage() {
         <div className="container mx-auto px-4 py-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
-              <Link href={`/events/${eventId}`}>
+              <Link href={`/events/${eventId}/category/${encodeURIComponent(categoryName)}/select-judge`}>
                 <Button variant="outline" className="bg-white/10 border-white/20 text-white hover:bg-white/20">
                   <ArrowLeft className="w-4 h-4 mr-2" />
-                  Back to Categories
+                  Back to Judge Selection
                 </Button>
               </Link>
               <div>
@@ -418,6 +453,11 @@ export default function CategoryJudgingPage() {
                   <p className="text-red-300 text-xs mt-1">
                     🔒 Locked by: {event.locked_by} •{" "}
                     {event.locked_at ? new Date(event.locked_at).toLocaleString() : ""}
+                  </p>
+                )}
+                {currentJudgeDetails && (
+                  <p className="text-white/70 text-xs mt-1">
+                    Judging as: <span className="font-bold text-yellow-300">{currentJudgeDetails.name}</span>
                   </p>
                 )}
               </div>
@@ -450,14 +490,6 @@ export default function CategoryJudgingPage() {
                   )}
                 </Button>
               )}
-              <Button
-                onClick={saveMarks}
-                disabled={saving || event.is_locked}
-                className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white font-bold text-xs md:text-sm px-3 py-2 md:px-4 disabled:opacity-50"
-              >
-                <Save className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" />
-                {saving ? "Saving..." : "Save All Marks"}
-              </Button>
             </div>
           </div>
         </div>
@@ -465,7 +497,7 @@ export default function CategoryJudgingPage() {
 
       <main className="container mx-auto px-4 py-8 w-full">
         {/* Lock Warning for Non-Admins */}
-        {event.is_locked && !isAdmin && (
+        {event.is_locked && !isAdminLoggedIn() && (
           <Card className="mb-6 bg-red-500/10 border-red-500/20">
             <CardHeader>
               <CardTitle className="text-white text-lg flex items-center gap-2">
@@ -569,7 +601,10 @@ export default function CategoryJudgingPage() {
                                 )),
                               )}
                               <th className="text-center py-2 md:py-4 px-1 md:px-3 text-white font-bold bg-gradient-to-r from-yellow-500/20 to-orange-500/20 min-w-[60px]">
-                                <div className="text-xs md:text-sm">Total</div>
+                                <div className="text-xs md:text-sm">My Total</div>
+                              </th>
+                              <th className="text-center py-2 md:py-4 px-1 md:px-3 text-white font-bold bg-white/5 min-w-[60px]">
+                                <div className="text-xs md:text-sm">Actions</div>
                               </th>
                             </tr>
                           </thead>
@@ -655,6 +690,17 @@ export default function CategoryJudgingPage() {
                                 <td className="py-6 md:py-4 px-1 md:px-3 text-center bg-gradient-to-r from-yellow-500/10 to-orange-500/10">
                                   <div className="text-white font-bold text-lg md:text-2xl">{team.total_marks}</div>
                                 </td>
+                                <td className="py-6 md:py-4 px-1 md:px-3 text-center">
+                                  <Button
+                                    onClick={() => saveTeamMarks(team.participants)}
+                                    disabled={saving || event.is_locked}
+                                    size="sm"
+                                    className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white font-bold text-xs px-3 py-2 disabled:opacity-50"
+                                  >
+                                    <Save className="w-3 h-3 mr-1" />
+                                    {saving ? "Saving..." : "Save"}
+                                  </Button>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -681,7 +727,7 @@ export default function CategoryJudgingPage() {
                                 </div>
                                 <div className="text-right">
                                   <div className="text-2xl font-bold text-white">{team.total_marks}</div>
-                                  <div className="text-xs text-white/60">Total</div>
+                                  <div className="text-xs text-white/60">My Total</div>
                                 </div>
                               </div>
                             </CardHeader>
@@ -751,6 +797,14 @@ export default function CategoryJudgingPage() {
                                   </div>
                                 ))}
                               </div>
+                              <Button
+                                onClick={() => saveTeamMarks(team.participants)}
+                                disabled={saving || event.is_locked}
+                                className="w-full mt-4 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white font-bold text-sm px-3 py-2 disabled:opacity-50"
+                              >
+                                <Save className="w-4 h-4 mr-2" />
+                                {saving ? "Saving..." : "Save Marks"}
+                              </Button>
                             </CardContent>
                           </Card>
                         ))}
@@ -768,7 +822,7 @@ export default function CategoryJudgingPage() {
               <CardHeader>
                 <CardTitle className="text-2xl font-bold text-white flex items-center gap-2">
                   <Trophy className="w-6 h-6 text-yellow-400" />
-                  Live Rankings
+                  My Live Rankings
                 </CardTitle>
               </CardHeader>
               <CardContent>

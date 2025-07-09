@@ -186,13 +186,6 @@ export default function EventCategoriesPage() {
                 Back to Events
               </Button>
             </Link>
-            {error.includes("locked") && (
-              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
-                <p className="text-yellow-300 text-sm">
-                  📞 Contact the administrator to unlock this event and continue judging.
-                </p>
-              </div>
-            )}
             {!isAdmin && (
               <Link href="/admin/login">
                 <Button variant="outline" className="bg-white/10 border-white/20 text-white hover:bg-white/20 w-full">
@@ -308,7 +301,7 @@ export default function EventCategoriesPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <Link href={`/events/${eventId}/category/${encodeURIComponent(category.name)}`}>
+                  <Link href={`/events/${eventId}/category/${encodeURIComponent(category.name)}/select-judge`}>
                     <Button className="w-full bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white font-bold py-3 text-lg transition-all duration-300 transform hover:scale-105">
                       Judge Category 🚀
                     </Button>

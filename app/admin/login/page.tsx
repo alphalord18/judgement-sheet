@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
@@ -97,7 +96,6 @@ export default function AdminLoginPage() {
                 required
               />
             </div>
-
             <div className="space-y-2">
               <Label htmlFor="password" className="text-white">
                 Password
