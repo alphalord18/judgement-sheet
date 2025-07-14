@@ -159,17 +159,21 @@ export default function MarksPage() {
           // Add participant name to team
           categoriesMap[category][teamName].participants.push(participant.name)
 
-          // Calculate marks for this participant and add to team total
+          // Calculate marks for this participant from ALL judges and add to team total
           const marks_by_criteria: Record<number, number> = {}
           let participant_total_marks = 0
 
           ;(criteriaData || []).forEach((criteria) => {
             let criteriaTotal = 0
             for (let round = 1; round <= event.rounds; round++) {
-              const mark = marksData?.find(
+              // Get ALL marks for this participant, criteria, and round from ALL judges
+              const allMarksForCriteria = marksData?.filter(
                 (m) => m.participant_id === participant.id && m.criteria_id === criteria.id && m.round_number === round,
-              )
-              criteriaTotal += mark?.marks_obtained || 0
+              ) || []
+              
+              // Sum up marks from all judges for this criteria and round
+              const roundTotal = allMarksForCriteria.reduce((sum, mark) => sum + (mark.marks_obtained || 0), 0)
+              criteriaTotal += roundTotal
             }
             marks_by_criteria[criteria.id] = criteriaTotal
             participant_total_marks += criteriaTotal

@@ -174,17 +174,68 @@ export default function EventMarksPage() {
 
         // Process each team within the category
         Object.entries(teamsInCategory).forEach(([teamId, teamMembers]) => {
-          teamMembers.forEach((participant) => {
-            // Determine if this participant is part of a team that should be grouped
-            const isTeamParticipant = !participant.solo_marking && teamMembers.length > 1
-            const isFirstParticipantOfTeam = isTeamParticipant && teamMembers[0].id === participant.id
+          // Check if this is a solo event or team event
+          const isSoloEvent = teamMembers.length === 1 || teamMembers[0].solo_marking
+          
+          if (isSoloEvent) {
+            // Solo participants - process each individually
+            teamMembers.forEach((participant) => {
+              const marks_by_judge_and_criteria: Record<number, Record<number, number>> = {}
+              let total_marks_overall = 0
 
-            // If it's a team participant but not the first one, skip creating a new entry
-            if (isTeamParticipant && !isFirstParticipantOfTeam) {
-              return
-            }
+              // Calculate marks for each criteria across all rounds and judges
+              ;(criteriaData || []).forEach((criteria) => {
+                // Initialize marks for each judge for this criteria
+                judgesData?.forEach((judge) => {
+                  if (!marks_by_judge_and_criteria[judge.id]) {
+                    marks_by_judge_and_criteria[judge.id] = {}
+                  }
+                  marks_by_judge_and_criteria[judge.id][criteria.id] = 0
+                })
 
-            const marks_by_judge_and_criteria: Record<number, Record<number, number>> = {} // judge_id -> criteria_id -> total marks for that criteria by that judge
+                // For solo marking, only use this participant's marks
+                for (let round = 1; round <= eventData.rounds; round++) {
+                  const relevantMarks = marksData?.filter(
+                    (m) => m.participant_id === participant.id && 
+                           m.criteria_id === criteria.id && 
+                           m.round_number === round,
+                  )
+
+                  relevantMarks?.forEach((mark) => {
+                    if (mark.judge_id) {
+                      if (!marks_by_judge_and_criteria[mark.judge_id]) {
+                        marks_by_judge_and_criteria[mark.judge_id] = {}
+                      }
+                      marks_by_judge_and_criteria[mark.judge_id][criteria.id] =
+                        (marks_by_judge_and_criteria[mark.judge_id][criteria.id] || 0) + mark.marks_obtained
+                      categoriesMap[category].judges.add(mark.judge_id)
+                    }
+                  })
+                }
+              })
+
+              // Calculate overall total marks
+              for (const judgeId in marks_by_judge_and_criteria) {
+                for (const criteriaId in marks_by_judge_and_criteria[judgeId]) {
+                  total_marks_overall += marks_by_judge_and_criteria[judgeId][criteriaId]
+                }
+              }
+
+              const participantWithMarks: ParticipantWithMarks = {
+                ...participant,
+                total_marks_overall,
+                rank: 0,
+                marks_by_judge_and_criteria,
+                team_members: undefined, // Solo participant
+              }
+
+              categoriesMap[category].participants.push(participantWithMarks)
+            })
+          } else {
+            // Team participants - create ONE entry for the entire team
+            // Use the first member as the representative
+            const representativeParticipant = teamMembers[0]
+            const marks_by_judge_and_criteria: Record<number, Record<number, number>> = {}
             let total_marks_overall = 0
 
             // Calculate marks for each criteria across all rounds and judges
@@ -197,32 +248,29 @@ export default function EventMarksPage() {
                 marks_by_judge_and_criteria[judge.id][criteria.id] = 0
               })
 
-              // For team marking, marks are associated with the first participant of the team
-              const participantIdsToConsider = participant.solo_marking
-                ? [participant.id]
-                : [teamMembers[0].id]
+              // For team marking, marks should be stored against the first participant
+              // (or whichever participant the judges marked - this depends on your marking system)
+              for (let round = 1; round <= eventData.rounds; round++) {
+                const relevantMarks = marksData?.filter(
+                  (m) => m.participant_id === representativeParticipant.id && 
+                         m.criteria_id === criteria.id && 
+                         m.round_number === round,
+                )
 
-              for (const pId of participantIdsToConsider) {
-                for (let round = 1; round <= eventData.rounds; round++) {
-                  const relevantMarks = marksData?.filter(
-                    (m) => m.participant_id === pId && m.criteria_id === criteria.id && m.round_number === round,
-                  )
-
-                  relevantMarks?.forEach((mark) => {
-                    if (mark.judge_id) {
-                      if (!marks_by_judge_and_criteria[mark.judge_id]) {
-                        marks_by_judge_and_criteria[mark.judge_id] = {}
-                      }
-                      marks_by_judge_and_criteria[mark.judge_id][criteria.id] =
-                        (marks_by_judge_and_criteria[mark.judge_id][criteria.id] || 0) + mark.marks_obtained
-                      categoriesMap[category].judges.add(mark.judge_id) // Track judges who marked in this category
+                relevantMarks?.forEach((mark) => {
+                  if (mark.judge_id) {
+                    if (!marks_by_judge_and_criteria[mark.judge_id]) {
+                      marks_by_judge_and_criteria[mark.judge_id] = {}
                     }
-                  })
-                }
+                    marks_by_judge_and_criteria[mark.judge_id][criteria.id] =
+                      (marks_by_judge_and_criteria[mark.judge_id][criteria.id] || 0) + mark.marks_obtained
+                    categoriesMap[category].judges.add(mark.judge_id)
+                  }
+                })
               }
             })
 
-            // Calculate overall total marks for the participant/team (sum of all judges' marks)
+            // Calculate overall total marks
             for (const judgeId in marks_by_judge_and_criteria) {
               for (const criteriaId in marks_by_judge_and_criteria[judgeId]) {
                 total_marks_overall += marks_by_judge_and_criteria[judgeId][criteriaId]
@@ -230,15 +278,15 @@ export default function EventMarksPage() {
             }
 
             const participantWithMarks: ParticipantWithMarks = {
-              ...participant,
+              ...representativeParticipant,
               total_marks_overall,
-              rank: 0, // Will be set after sorting
+              rank: 0,
               marks_by_judge_and_criteria,
-              team_members: isTeamParticipant ? teamMembers : undefined,
+              team_members: teamMembers, // Include all team members
             }
 
             categoriesMap[category].participants.push(participantWithMarks)
-          })
+          }
         })
       })
 
