@@ -639,19 +639,21 @@ export default function CategoryJudgingPage() {
                                         >
                                           <div className="space-y-2 flex flex-col items-center">
                                             {team.participants.map((participant) => (
-                                              <Input
-                                                key={`input-${participant.id}`}
-                                                type="number"
-                                                min="0"
-                                                max={criterion.max_marks}
-                                                value={marks[`${participant.id}-${criterion.id}-${round}`] || ""}
-                                                onChange={(e) =>
-                                                  handleMarkChange(participant.id, criterion.id, round, e.target.value)
-                                                }
-                                                disabled={event.is_locked}
-                                                className="w-12 h-10 bg-white/10 border-white/20 text-white text-center text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
-                                                placeholder="0"
-                                              />
+                                              <div key={`input-${participant.id}`} className="flex flex-col items-center">
+                                                <Input
+                                                  type="number"
+                                                  min="0"
+                                                  max={criterion.max_marks}
+                                                  value={marks[`${participant.id}-${criterion.id}-${round}`] || ""}
+                                                  onChange={(e) =>
+                                                    handleMarkChange(participant.id, criterion.id, round, e.target.value)
+                                                  }
+                                                  disabled={event.is_locked}
+                                                  className="w-12 h-10 bg-white/10 border-white/20 text-white text-center text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
+                                                  placeholder="0"
+                                                />
+                                                <div className="text-xs text-white/60 mt-1">/{criterion.max_marks}</div>
+                                              </div>
                                             ))}
                                           </div>
                                         </td>
@@ -664,23 +666,26 @@ export default function CategoryJudgingPage() {
                                           className="py-6 md:py-4 px-1 md:px-3 text-center"
                                         >
                                           <div className="flex justify-center">
-                                            <Input
-                                              type="number"
-                                              min="0"
-                                              max={criterion.max_marks}
-                                              value={marks[`${firstParticipant.id}-${criterion.id}-${round}`] || ""}
-                                              onChange={(e) =>
-                                                handleMarkChange(
-                                                  firstParticipant.id,
-                                                  criterion.id,
-                                                  round,
-                                                  e.target.value,
-                                                )
-                                              }
-                                              disabled={event.is_locked}
-                                              className="w-14 h-10 bg-white/10 border-white/20 text-white text-center text-xs md:text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
-                                              placeholder="0"
-                                            />
+                                            <div className="flex flex-col items-center">
+                                              <Input
+                                                type="number"
+                                                min="0"
+                                                max={criterion.max_marks}
+                                                value={marks[`${firstParticipant.id}-${criterion.id}-${round}`] || ""}
+                                                onChange={(e) =>
+                                                  handleMarkChange(
+                                                    firstParticipant.id,
+                                                    criterion.id,
+                                                    round,
+                                                    e.target.value,
+                                                  )
+                                                }
+                                                disabled={event.is_locked}
+                                                className="w-14 h-10 bg-white/10 border-white/20 text-white text-center text-xs md:text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
+                                                placeholder="0"
+                                              />
+                                              <div className="text-xs text-white/60 mt-1">/{criterion.max_marks}</div>
+                                            </div>
                                           </div>
                                         </td>
                                       )
@@ -742,7 +747,7 @@ export default function CategoryJudgingPage() {
                                         if (team.is_solo_marking) {
                                           return (
                                             <div key={criterion.id} className="space-y-1">
-                                              <label className="text-xs text-white/70">{criterion.criteria_name}</label>
+                                              <label className="text-xs text-white/70">{criterion.criteria_name} (Max: {criterion.max_marks})</label>
                                               <div className="space-y-1">
                                                 {team.participants.map((participant) => (
                                                   <Input
@@ -771,7 +776,7 @@ export default function CategoryJudgingPage() {
                                           const firstParticipant = team.participants[0]
                                           return (
                                             <div key={criterion.id} className="space-y-1">
-                                              <label className="text-xs text-white/70">{criterion.criteria_name}</label>
+                                              <label className="text-xs text-white/70">{criterion.criteria_name} (Max: {criterion.max_marks})</label>
                                               <Input
                                                 type="number"
                                                 min="0"
