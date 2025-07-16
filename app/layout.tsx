@@ -4,7 +4,7 @@ import "./globals.css"
 
 export const metadata: Metadata = {
   title: "ScoreSync",
-  description: "ScoreSync is a website that's made it easier for both judges and OC to keep a record of the marks",
+  description: "ScoreSync is a centralized platform to view detailed judgment sheets and scores for event participants in real-time.",
   generator: "JUDGEMENT",
 }
 
